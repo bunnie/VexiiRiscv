@@ -67,6 +67,7 @@ object GenBun extends App {
       }
       pc.walkComponents {
         case c: Ram_1w_1rs => {
+          println("path %s", c.getPath())
           c.rework {
             topPatch.CMBIST.pull(propagateName = true)
             topPatch.CMATPG.pull(propagateName = true)
@@ -158,4 +159,235 @@ class BunSoCForceRamBlockPhase() extends spinal.core.internals.Phase{
     }
   }
   override def hasNetlistImpact: Boolean = false
+}
+
+// Generates VexiiRiscv verilog using command line arguments
+object GenBunTl extends App {
+  val param = new ParamSimple()
+  val sc = BunSpinalConfig.addStandardMemBlackboxing(blackboxSyncOnly)
+  val regions = ArrayBuffer[PmaRegion]()
+  var tlSinkWidth = 0
+
+  assert(new scopt.OptionParser[Unit]("VexiiRiscv") {
+    help("help").text("prints this usage text")
+    opt[Int]("tl-sink-width") action { (v, c) => tlSinkWidth = v }
+    param.addOptions(this)
+    ParamSimple.addOptionRegion(this, regions)
+  }.parse(args, ()).nonEmpty)
+
+  if(regions.isEmpty) regions ++= ParamSimple.defaultPma
+
+  sc.memBlackBoxers += new PhaseNetlist {
+    override def impl(pc: PhaseContext): Unit = {
+      pc.walkComponents {
+        case c: Ram_1w_1rs => {
+          val awidth = c.rdAddressWidth
+          val bwidth = c.wrAddressWidth
+          val adata_width = c.rdDataWidth
+          val bdata_width = c.wrDataWidth
+          val topPatch = pc.topLevel rework new Area {
+            // println(f"rd ${c.rdDataWidth}, wd ${c.wrDataWidth}, ra ${c.rdAddressWidth}, wa ${c.wrAddressWidth}")
+            setName(c.getPath("_"))
+            val stov, emasa, tena, tcena, neb, tcenb, sea, dftrambyp, seb, ret1n = in Bool()
+            val emaa = in UInt (3 bits)
+            val emab = in UInt (3 bits)
+            val taa = in UInt (awidth bits)
+            val wenb = in UInt (bdata_width bits)
+            val tab = in UInt (bwidth bits)
+            val tdb = in UInt (bdata_width bits)
+            val sia = in UInt (3 bits)
+            val sib = in UInt (3 bits)
+          }
+          c.rework {
+            topPatch.stov.pull(propagateName = true)
+            topPatch.emasa.pull(propagateName = true)
+            topPatch.tena.pull(propagateName = true)
+            topPatch.tcena.pull(propagateName = true)
+            topPatch.neb.pull(propagateName = true)
+            topPatch.tcenb.pull(propagateName = true)
+            topPatch.sea.pull(propagateName = true)
+            topPatch.dftrambyp.pull(propagateName = true)
+            topPatch.seb.pull(propagateName = true)
+            topPatch.ret1n.pull(propagateName = true)
+            topPatch.emaa.pull(propagateName = true)
+            topPatch.emab.pull(propagateName = true)
+            topPatch.taa.pull(propagateName = true)
+            topPatch.wenb.pull(propagateName = true)
+            topPatch.tab.pull(propagateName = true)
+            topPatch.tdb.pull(propagateName = true)
+            topPatch.sia.pull(propagateName = true)
+            topPatch.sib.pull(propagateName = true)
+          }
+          val blackboxed_outputs = c rework new AreaRoot {
+            val cenya, cenyb = out Bool()
+            val soa = out UInt (2 bits)
+            val sob = out UInt (2 bits)
+            val wenyb = out UInt (adata_width bits)
+            val aya = out UInt (awidth bits)
+            val ayb = out UInt (bwidth bits)
+          }
+          pc.topLevel rework new Area {
+            setName(c.getPath("_"))
+            val cenya, cenyb = out Bool()
+            val soa = out UInt (2 bits)
+            val sob = out UInt (2 bits)
+            val wenyb = out UInt (adata_width bits)
+            val aya = out UInt (awidth bits)
+            val ayb = out UInt (bwidth bits)
+
+            cenya := blackboxed_outputs.cenya.pull(propagateName = true)
+            cenyb := blackboxed_outputs.cenyb.pull(propagateName = true)
+            soa := blackboxed_outputs.soa.pull(propagateName = true)
+            sob := blackboxed_outputs.sob.pull(propagateName = true)
+            wenyb := blackboxed_outputs.wenyb.pull(propagateName = true)
+            aya := blackboxed_outputs.aya.pull(propagateName = true)
+            ayb := blackboxed_outputs.ayb.pull(propagateName = true)
+          }
+          c.addGeneric("ramname", s"RAM_DP_${c.wordCount}_${c.wordWidth}")
+        }
+        case _ =>
+      }
+    }
+  }
+
+/*
+  // configure CPU performance features
+  param.decoders = 2
+  param.lanes = 2
+  param.withBtb = true
+  param.withGShare = true
+  param.withRas = true
+  param.allowBypassFrom = 0
+  param.divRadix = 4
+  param.withLateAlu = true
+  param.withAlignerBuffer = true
+  param.withDispatcherBuffer = true
+
+  // configure Dcache
+  param.lsuMemDataWidthMin = 64
+  param.lsuL1Sets = 64
+  param.lsuL1Ways = 4
+  param.lsuL1RefillCount = 8
+  param.lsuL1WritebackCount = 8
+  param.lsuStoreBufferSlots = 4
+  param.lsuStoreBufferOps = 32
+  param.withLsuBypass = true
+  param.lsuSoftwarePrefetch = true
+  param.lsuHardwarePrefetch = "rpt"
+
+  // configure MMU
+  param.privParam.withSupervisor = true
+  param.privParam.withUser = true
+  param.withMmu = true
+
+  // 0-cycle regfile: what does this do to Fmax?
+  param.regFileSync = false
+
+  // configure Icache
+  param.fetchMemDataWidthMin = 64
+  param.fetchL1Sets = 64
+  param.fetchL1Ways = 4
+  param.fetchL1RefillCount = 4
+
+  // configure RV architecture features
+  param.withMul = true
+  param.withDiv = true
+  param.withRva = true
+  param.withRvc = true
+  param.withRvZb = true
+  param.withRvcbm = true
+  param.xlen = 32
+
+  // enable caches
+  param.lsuL1Enable = true
+  param.fetchL1Enable = true
+
+  // above is superceded with command line args:
+  --with-fetch-l1 --with-lsu-l1 --lsu-l1-coherency --fetch-l1-hardware-prefetch=nl
+  --fetch-l1-refill-count=2 --lsu-software-prefetch --lsu-hardware-prefetch rpt
+  --performance-counters 9 --regfile-async --lsu-l1-store-buffer-ops=32
+  --lsu-l1-refill-count 4 --lsu-l1-writeback-count 4 --lsu-l1-store-buffer-slots=4
+  --with-mul --with-div --allow-bypass-from=0 --with-lsu-bypass --with-supervisor
+  --fetch-l1-ways=4 --fetch-l1-mem-data-width-min=64 --lsu-l1-ways=4 --lsu-l1-mem-data-width-min=64
+  --xlen=32 --with-rvc --with-rva --with-btb --with-ras --with-gshare --with-late-alu
+  --decoders=2 --lanes=2 --with-dispatcher-buffer --with-hart-id-input
+  --reset-vector=0x10000 --with-whiteboxer-outputs
+  --region base=3000,size=1000,main=0,exe=1 --region base=2010000,size=1000,main=0,exe=1
+  --region base=1000,size=1000,main=0,exe=1 --region base=10020000,size=1000,main=0,exe=1
+  --region base=2000000,size=10000,main=0,exe=1 --region base=C000000,size=4000000,main=0,exe=1
+  --region base=0,size=1000,main=0,exe=1 --region base=10000,size=10000,main=0,exe=1
+  --region base=100000,size=1000,main=0,exe=1 --region base=110000,size=1000,main=0,exe=1
+  --region base=80000000,size=10000000,main=1,exe=1 --region base=8000000,size=10000,main=1,exe=1
+  --with-boot-mem-init --tl-sink-width=4 --with-rvZb
+
+*/
+  val report = sc.generateSystemVerilog {
+    val plugins = param.plugins()
+    import spinal.lib.bus.tilelink._
+    import spinal.lib.bus.tilelink.fabric._
+    new Component {
+      setDefinitionName("VexiiRiscvTilelink")
+      val cpu = new TilelinkVexiiRiscvFiber(plugins)
+      val mem = new SlaveBus(
+        M2sSupport(
+          transfers = M2sTransfers.all,
+          dataWidth = param.memDataWidth,
+          addressWidth = param.physicalWidth
+        ),
+        S2mParameters(
+          List(
+            S2mAgent(
+              name = null,
+              sinkId = SizeMapping(0, 1 << tlSinkWidth),
+              emits = S2mTransfers(probe = SizeRange(0x40))
+            )
+          )
+        )
+      )
+
+      // Custom memory mapping
+      val tags = mem.node.spinalTags.filter(!_.isInstanceOf[MemoryEndpoint])
+      mem.node.spinalTags.clear()
+      mem.node.spinalTags ++= tags
+      val virtualRegions = for (region <- regions) yield new VirtualEndpoint(mem.node, region.mapping) {
+        if (region.isMain) self.addTag(PMA.MAIN)
+        if (region.isExecutable) self.addTag(PMA.EXECUTABLE)
+      }
+
+      mem.node << cpu.iBus
+      mem.node << cpu.dBus
+      if (cpu.lsuL1Bus != null) mem.node << cpu.lsuL1Bus
+
+      // Bind interrupts
+      val mti, msi, mei = InterruptNode.master()
+      cpu.priv.get.mti << mti;
+      in(mti.flag)
+      cpu.priv.get.msi << msi;
+      in(msi.flag)
+      cpu.priv.get.mei << mei;
+      in(mei.flag)
+
+      val sei = (cpu.priv.get.sei != null) generate InterruptNode.master()
+      if (sei != null) cpu.priv.get.sei << sei;
+      in(sei.flag)
+
+      val patcher = Fiber patch new AreaRoot {
+        val hartId = param.withHartIdInput generate plugins.collectFirst {
+          case p: PrivilegedPlugin => p.api.harts(0).hartId.toIo
+        }
+
+        val memA = mem.node.bus.a
+        out(memA.compliantMask()).setName(memA.mask.getName())
+        memA.mask.setName(memA.mask.getName() + "_non_compliant")
+        memA.mask.setAsDirectionLess()
+      }
+    }
+  }
+
+  for (m <- report.toplevel.mem.node.m2s.parameters.masters) {
+    println(m.name)
+    for (source <- m.mapping) {
+      println(s"- ${source.id} ${source.emits}")
+    }
+  }
 }
