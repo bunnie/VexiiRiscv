@@ -14,7 +14,7 @@ import vexiiriscv.execute._
 import vexiiriscv.execute.cfu.{CfuBusParameter, CfuPlugin, CfuPluginEncoding}
 import vexiiriscv.execute.fpu.{FpuAddSharedParam, FpuMulParam}
 import vexiiriscv.execute.lsu._
-import vexiiriscv.fetch.{FetchCachelessAxi4Plugin, FetchCachelessPlugin, FetchCachelessWishbonePlugin, FetchL1Axi4Plugin, FetchL1Plugin, FetchL1WishbonePlugin, PrefetcherNextLinePlugin}
+import vexiiriscv.fetch.{FetchCachelessPlugin, FetchL1Plugin, PrefetcherNextLinePlugin}
 import vexiiriscv.memory.{MmuPortParameter, MmuSpec, MmuStorageLevel, MmuStorageParameter, PmpParam, PmpPlugin, PmpPortParameter}
 import vexiiriscv.misc._
 import vexiiriscv.prediction.{LearnCmd, LearnPlugin}
@@ -26,24 +26,10 @@ import java.security.MessageDigest
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
-
-object FetchBusEnum extends Enumeration {
-  type Bus = Value
-  val native, axi4, wishbone = Value
-}
-object LsuBusEnum extends Enumeration {
-  type Bus = Value
-  val native, axi4, wishbone = Value
-}
-object LsuL1BusEnum extends Enumeration {
-  type Bus = Value
-  val native, axi4, wishbone = Value
-}
-
 object ParamSimple{
   def addOptionRegion(parser: scopt.OptionParser[Unit], regions : ArrayBuffer[PmaRegion]): Unit = {
     import parser._
-    opt[Map[String, String]]("region").unbounded() action { (v, c) =>
+    opt[Map[String, String]]("region") unbounded() action { (v, c) =>
       regions += PmaRegionImpl(
         mapping = SizeMapping(BigInt(v("base"), 16), BigInt(v("size"), 16)),
         transfers = M2sTransfers.all,
@@ -74,8 +60,8 @@ object ParamSimple{
     )
   )
 
-  def setPma(plugins : scala.collection.Seq[Hostable], regions : scala.collection.Seq[PmaRegion] = defaultPma) = {
-    val array = ArrayBuffer(regions.toSeq :_*)
+  def setPma(plugins : Seq[Hostable], regions : Seq[PmaRegion] = defaultPma) = {
+    val array = ArrayBuffer(regions :_*)
     plugins.foreach {
       case p: FetchCachelessPlugin => p.regions.load(array)
       case p: LsuCachelessPlugin => p.regions.load(array)
@@ -97,7 +83,7 @@ object ParamSimple{
  * - you instanciate VexiiRiscv with that list of plugin
  * - Thenthen you should get a functional VexiiRiscv.
  */
-class ParamSimple() {
+class ParamSimple(){
   var xlen = 32
   var withRvc = false
   var withAlignerBuffer = false
@@ -121,7 +107,6 @@ class ParamSimple() {
   var withDiv = false
   var withRva = false
   var withRvf = false
-  var withRvcbm = false
   var btbDualPortRam = true
   var fpuIgnoreSubnormal = false
   var fpuWbAt = 2
@@ -151,9 +136,7 @@ class ParamSimple() {
   var fetchMemDataWidthMin = 32
   var fetchL1RefillCount = 1
   var fetchL1Prefetch = "none"
-  var fetchBus = FetchBusEnum.native
-  var lsuBus = LsuBusEnum.native
-  var lsuL1Bus = LsuL1BusEnum.native
+  var fetchL1TagsReadAsync = false
   var lsuSoftwarePrefetch = false
   var lsuHardwarePrefetch = "none"
   var lsuStoreBufferSlots = 0
@@ -164,6 +147,7 @@ class ParamSimple() {
   var lsuL1RefillCount = 1
   var lsuL1WritebackCount = 1
   var lsuL1Coherency = false
+  var lsuL1TagsReadAsync = false
   var lsuMemDataWidthMin = 32
   var withLsuBypass = false
   var withIterativeShift = false
@@ -186,12 +170,12 @@ class ParamSimple() {
       MmuStorageLevel(
         id = 0,
         ways = 2,
-        sets = 8
+        sets = 32
       ),
       MmuStorageLevel(
         id = 1,
         ways = 1,
-        sets = 8
+        sets = 32
       )
     ),
     priority = 0
@@ -245,12 +229,12 @@ class ParamSimple() {
       MmuStorageLevel(
         id = 0,
         ways = 3,
-        sets = 8
+        sets = 32
       ),
       MmuStorageLevel(
         id = 1,
         ways = 1,
-        sets = 8
+        sets = 32
       )
     ),
     priority = 1
@@ -466,14 +450,7 @@ class ParamSimple() {
         case e: BigInt => md ++= s" $e"
         case e: String => md ++= s" $e"
         case e : Product => md ++= s" $e"
-        case e => {
-          if(e.getClass.getName == "scala.Enumeration$Val"){
-            md ++= s" ${e.toString}"
-          } else {
-            println(s"$e")
-            ???
-          }
-        };
+        case e => println(s"$e"); ???
       }
     }
     Math.abs(md.toString.hashCode())
@@ -518,7 +495,7 @@ class ParamSimple() {
     r.mkString("_")
   }
 
-  // Initialize a scopt command line argument parser to take control of this SimpleParam
+  // Initialize a scopt commande line arguement parser to take controle of this SimpleParam
   def addOptions(parser: scopt.OptionParser[Unit]) = {
     import parser._
     opt[Int]("xlen") action { (v, c) => xlen = v }
@@ -526,7 +503,7 @@ class ParamSimple() {
     opt[Int]("lanes") action { (v, c) => lanes = v }
     opt[Int]("decoder-at") action { (v, c) => decoderAt = v }
     opt[Int]("dispatcher-at") action { (v, c) => dispatcherAt = v }
-    opt[Long]("reset-vector").unbounded() action { (v, c) => resetVector = v }
+    opt[Long]("reset-vector") unbounded() action { (v, c) => resetVector = v }
     opt[Unit]("relaxed-div") action { (v, c) => relaxedDiv = true }
     opt[Unit]("relaxed-mul-inputs") action { (v, c) => relaxedMulInputs = true }
     opt[Unit]("relaxed-branch") action { (v, c) => relaxedBranch = true }
@@ -549,20 +526,19 @@ class ParamSimple() {
       fpuAddSharedParam.packAt = 2
       fpuWbAt = 1
     }
-    opt[Unit]("with-mul").unbounded() action { (v, c) => withMul = true }
-    opt[Unit]("with-div").unbounded() action { (v, c) => withDiv = true }
+    opt[Unit]("with-mul") unbounded() action { (v, c) => withMul = true }
+    opt[Unit]("with-div") unbounded() action { (v, c) => withDiv = true }
     opt[Unit]("with-rvm") action { (v, c) => withMul = true; withDiv = true }
     opt[Unit]("with-rva") action { (v, c) => withRva = true }
     opt[Unit]("with-rvf") action { (v, c) => withRvf = true }
     opt[Unit]("with-rvd") action { (v, c) => withRvd = true; withRvf = true }
     opt[Unit]("with-rvc") action { (v, c) => withRvc = true; withAlignerBuffer = true }
     opt[Unit]("with-rvZb") action { (v, c) => withRvZb = true }
-    opt[Unit]("with-rvZcbm") action { (v, c) => withRvcbm = true }
     opt[Unit]("with-whiteboxer-outputs") action { (v, c) => withWhiteboxerOutputs = true }
     opt[Unit]("with-hart-id-input") action { (v, c) => withHartIdInput = true }
     opt[Unit]("fma-reduced-accuracy") action { (v, c) => fpuMulParam.fmaFullAccuracy = false }
     opt[Unit]("fpu-ignore-subnormal") action { (v, c) => fpuIgnoreSubnormal = true }
-    opt[Unit]("with-aligner-buffer").unbounded() action { (v, c) => withAlignerBuffer = true }
+    opt[Unit]("with-aligner-buffer") unbounded() action { (v, c) => withAlignerBuffer = true }
     opt[Unit]("with-dispatcher-buffer") action { (v, c) => withDispatcherBuffer = true }
     opt[Unit]("with-supervisor") action { (v, c) => privParam.withSupervisor = true; privParam.withUser = true; withMmu = true }
     opt[Unit]("with-user") action { (v, c) => privParam.withUser = true }
@@ -585,33 +561,29 @@ class ParamSimple() {
     opt[Unit]("regfile-dual-ports") action { (v, c) => regFileDualPortRam = true }
     opt[Unit]("regfile-infer-ports") action { (v, c) => regFileDualPortRam = false }
     opt[Int]("allow-bypass-from") action { (v, c) => allowBypassFrom = v }
-    opt[Int]("performance-counters").unbounded() action { (v, c) => withPerformanceCounters = true; additionalPerformanceCounters = v }
-    opt[Unit]("without-performance-scountovf").unbounded() action { (v, c) => withPerformanceScountovf = false }
-    opt[Unit]("with-fetch-l1").unbounded() action { (v, c) => fetchL1Enable = true }
+    opt[Int]("performance-counters") unbounded() action { (v, c) => withPerformanceCounters = true; additionalPerformanceCounters = v }
+    opt[Unit]("without-performance-scountovf") unbounded() action { (v, c) => withPerformanceScountovf = false }
+    opt[Unit]("with-fetch-l1") unbounded() action { (v, c) => fetchL1Enable = true }
     opt[Unit]("with-lsu-l1") action { (v, c) => lsuL1Enable = true }
-    opt[Unit]("fetch-axi4") action { (v, c) => fetchBus = FetchBusEnum.axi4 }
-    opt[Unit]("fetch-wishbone") action { (v, c) => fetchBus = FetchBusEnum.wishbone }
-    opt[Unit]("lsu-axi4") action { (v, c) => lsuBus = LsuBusEnum.axi4 }
-    opt[Unit]("lsu-wishbone") action { (v, c) => lsuBus = LsuBusEnum.wishbone }
-    opt[Unit]("lsu-l1-axi4") action { (v, c) => lsuL1Bus = LsuL1BusEnum.axi4 }
-    opt[Unit]("lsu-l1-wishbone") action { (v, c) => lsuL1Bus = LsuL1BusEnum.wishbone }
     opt[Unit]("fetch-l1") action { (v, c) => fetchL1Enable = true }
     opt[Unit]("lsu-l1") action { (v, c) => lsuL1Enable = true }
-    opt[Int]("fetch-l1-sets").unbounded() action { (v, c) => fetchL1Sets = v }
-    opt[Int]("fetch-l1-ways").unbounded() action { (v, c) => fetchL1Ways = v }
-    opt[Int]("fetch-l1-refill-count").unbounded() action { (v, c) => fetchL1RefillCount = v }
+    opt[Int]("fetch-l1-sets") unbounded() action { (v, c) => fetchL1Sets = v }
+    opt[Int]("fetch-l1-ways") unbounded() action { (v, c) => fetchL1Ways = v }
+    opt[Int]("fetch-l1-refill-count") unbounded() action { (v, c) => fetchL1RefillCount = v }
+    opt[Unit]("fetch-l1-tags-read-async") action { (v, c) =>  fetchL1TagsReadAsync = true }
     opt[String]("fetch-l1-hardware-prefetch") action { (v, c) => fetchL1Prefetch = v }
-    opt[Int]("fetch-l1-mem-data-width-min").unbounded() action { (v, c) => fetchMemDataWidthMin = v }
+    opt[Int]("fetch-l1-mem-data-width-min") unbounded() action { (v, c) => fetchMemDataWidthMin = v }
     opt[Unit]("fetch-reduced-bank") action { (v, c) => fetchL1ReducedBank = true }
-    opt[Int]("lsu-l1-sets").unbounded() action { (v, c) => lsuL1Sets = v }
-    opt[Int]("lsu-l1-ways").unbounded() action { (v, c) => lsuL1Ways = v }
+    opt[Int]("lsu-l1-sets") unbounded() action { (v, c) => lsuL1Sets = v }
+    opt[Int]("lsu-l1-ways") unbounded() action { (v, c) => lsuL1Ways = v }
     opt[Int]("lsu-l1-store-buffer-slots") action { (v, c) => lsuStoreBufferSlots = v }
     opt[Int]("lsu-l1-store-buffer-ops") action { (v, c) => lsuStoreBufferOps = v }
+    opt[Unit]("lsu-l1-tags-read-async") action { (v, c) =>  lsuL1TagsReadAsync = true }
     opt[String]("lsu-hardware-prefetch") action { (v, c) => lsuHardwarePrefetch = v }
     opt[Unit]("lsu-software-prefetch") action { (v, c) => lsuSoftwarePrefetch = true }
     opt[Int]("lsu-l1-refill-count") action { (v, c) => lsuL1RefillCount = v }
     opt[Int]("lsu-l1-writeback-count") action { (v, c) => lsuL1WritebackCount = v }
-    opt[Int]("lsu-l1-mem-data-width-min").unbounded() action { (v, c) => lsuMemDataWidthMin = v }
+    opt[Int]("lsu-l1-mem-data-width-min") unbounded() action { (v, c) => lsuMemDataWidthMin = v }
     opt[Unit]("lsu-l1-coherency") action { (v, c) => lsuL1Coherency = true}
     opt[Unit]("with-lsu-bypass") action { (v, c) => withLsuBypass = true }
     opt[Unit]("without-lsu-bypass") action { (v, c) => withLsuBypass = false }
@@ -669,12 +641,12 @@ class ParamSimple() {
     val plugins = ArrayBuffer[Hostable]()
     if(withLateAlu) assert(allowBypassFrom == 0)
 
-    val intWritebackAt = 2 //Alias for "trap at" as well
+    val intWritebackAt = 2 //Alias for "trap at" aswell
 
     plugins += new riscv.RiscvPlugin(xlen, hartCount, rvf = withRvf, rvd = withRvd, rvc = withRvc)
     withMmu match {
-      case false => plugins += new vexiiriscv.memory.StaticTranslationPlugin(physicalWidth)
-      case true => plugins += new vexiiriscv.memory.MmuPlugin(
+      case false => plugins += new memory.StaticTranslationPlugin(physicalWidth)
+      case true => plugins += new memory.MmuPlugin(
         spec = if (xlen == 32) MmuSpec.sv32 else MmuSpec.sv39,
         physicalWidth = physicalWidth
       )
@@ -682,7 +654,7 @@ class ParamSimple() {
 
     plugins += new PmpPlugin(pmpParam)
 
-    plugins += new vexiiriscv.misc.PipelineBuilderPlugin()
+    plugins += new misc.PipelineBuilderPlugin()
     plugins += new schedule.ReschedulePlugin()
 
     // Branch prediction
@@ -720,30 +692,22 @@ class ParamSimple() {
     // Fetch
     plugins += new fetch.PcPlugin(resetVector)
     plugins += new fetch.FetchPipelinePlugin()
-    if(!fetchL1Enable) {
-      plugins += new fetch.FetchCachelessPlugin(
-        forkAt = fetchForkAt,
-        joinAt = fetchForkAt+1, //You can for instance allow the external memory to have more latency by changing this
-        wordWidth = fetchMemDataWidth,
-        pmpPortParameter = fetchNoL1PmpParam,
-        translationStorageParameter = fetchTsp,
-        translationPortParameter = withMmu match {
-          case false => null
-          case true => MmuPortParameter(
-            readAt = 0,
-            hitsAt = 0,
-            ctrlAt = 0,
-            rspAt = 0
-          )
-        }
-      )
-      fetchBus match {
-        case FetchBusEnum.native =>
-        case FetchBusEnum.axi4 => plugins += new FetchCachelessAxi4Plugin()
-        case FetchBusEnum.wishbone => plugins += new FetchCachelessWishbonePlugin()
+    if(!fetchL1Enable) plugins += new fetch.FetchCachelessPlugin(
+      forkAt = fetchForkAt,
+      joinAt = fetchForkAt+1, //You can for instance allow the external memory to have more latency by changing this
+      wordWidth = fetchMemDataWidth,
+      pmpPortParameter = fetchNoL1PmpParam,
+      translationStorageParameter = fetchTsp,
+      translationPortParameter = withMmu match {
+        case false => null
+        case true => MmuPortParameter(
+          readAt = 0,
+          hitsAt = 0,
+          ctrlAt = 0,
+          rspAt = 0
+        )
       }
-    }
-
+    )
     if(fetchL1Enable) {
       plugins += new fetch.FetchL1Plugin(
         lineSize = 64,
@@ -754,7 +718,7 @@ class ParamSimple() {
         memDataWidth = fetchMemDataWidth,
         reducedBankWidth = fetchL1ReducedBank,
         hitsWithTranslationWays = true,
-        tagsReadAsync = false,
+        tagsReadAsync = fetchL1TagsReadAsync,
         bootMemClear = bootMemClear,
         translationStorageParameter = fetchTsp,
         translationPortParameter = withMmu match {
@@ -770,13 +734,6 @@ class ParamSimple() {
           plugins += new fetch.PrefetcherNextLinePlugin(64)
           assert(fetchL1RefillCount > 1, "Fetch prefetch require fetchL1RefillCount > 1")
         }
-      }
-
-
-      fetchBus match {
-        case FetchBusEnum.native =>
-        case FetchBusEnum.axi4 => plugins += new FetchL1Axi4Plugin()
-        case FetchBusEnum.wishbone => plugins += new FetchL1WishbonePlugin()
       }
     }
     plugins += new decode.DecodePipelinePlugin()
@@ -859,36 +816,27 @@ class ParamSimple() {
       )
     )
     if(withRvZb) plugins ++= ZbPlugin.make(early0, formatAt=0)
-
-    lsuBus match {
-      case LsuBusEnum.native =>
-      case LsuBusEnum.axi4 => plugins += new LsuCachelessAxi4Plugin()
-      case LsuBusEnum.wishbone => plugins += new LsuCachelessWishbonePlugin()
-    }
-
-    if(!lsuL1Enable) {
-      plugins += new LsuCachelessPlugin(
-        layer     = early0,
-        withAmo   = withRva,
-        withSpeculativeLoadFlush = true,
-        addressAt = 0,
-        pmaAt     = lsuPmaAt,
-        forkAt    = lsuForkAt+0,
-        joinAt    = lsuForkAt+1,
-        wbAt      = 2, //TODO
-        pmpPortParameter = lsuNoL1PmpParam,
-        translationStorageParameter = lsuTsp,
-        translationPortParameter = withMmu match {
-          case false => null
-          case true => MmuPortParameter(
-            readAt = 0,
-            hitsAt = 0,
-            ctrlAt = 0,
-            rspAt = 0
-          )
-        }
-      )
-    }
+    if(!lsuL1Enable) plugins += new LsuCachelessPlugin(
+      layer     = early0,
+      withAmo   = withRva,
+      withSpeculativeLoadFlush = true,
+      addressAt = 0,
+      pmaAt     = lsuPmaAt,
+      forkAt    = lsuForkAt+0,
+      joinAt    = lsuForkAt+1,
+      wbAt      = 2, //TODO
+      pmpPortParameter = lsuNoL1PmpParam,
+      translationStorageParameter = lsuTsp,
+      translationPortParameter = withMmu match {
+        case false => null
+        case true => MmuPortParameter(
+          readAt = 0,
+          hitsAt = 0,
+          ctrlAt = 0,
+          rspAt = 0
+        )
+      }
+    )
     if(lsuL1Enable){
       plugins += new LsuPlugin(
         layer = early0,
@@ -897,7 +845,6 @@ class ParamSimple() {
         storeBufferSlots = lsuStoreBufferSlots,
         storeBufferOps = lsuStoreBufferOps,
         softwarePrefetch = lsuSoftwarePrefetch,
-        withCbm = withRvcbm,
         pmpPortParameter = fetchL1PmpParam,
         translationStorageParameter = lsuTsp,
         translationPortParameter = withMmu match {
@@ -915,8 +862,8 @@ class ParamSimple() {
         wayCount       = lsuL1Ways,
         withBypass     = withLsuBypass,
         withCoherency  = lsuL1Coherency,
-        withCbm        = withRvcbm,
-        bootMemClear = bootMemClear
+        bootMemClear   = bootMemClear,
+        tagsReadAsync  = lsuL1TagsReadAsync
       )
 
       lsuHardwarePrefetch match {
@@ -926,11 +873,6 @@ class ParamSimple() {
           sets = 128,
           bootMemClear = bootMemClear
         )
-      }
-      lsuL1Bus match {
-        case LsuL1BusEnum.native =>
-        case LsuL1BusEnum.axi4 => plugins += new LsuL1Axi4Plugin()
-        case LsuL1BusEnum.wishbone => plugins += new LsuL1WishbonePlugin()
       }
     }
 
