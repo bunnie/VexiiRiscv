@@ -33,7 +33,7 @@ object BunSpinalConfig extends spinal.core.SpinalConfig(
 
 object blackboxSyncOnly extends MemBlackboxingPolicy {
   override def translationInterest(topology: MemTopology): Boolean = {
-    if(topology.readsAsync.exists(_.readUnderWrite != writeFirst))
+    if(topology.readsAsync.exists(_.readUnderWrite != writeFirst) || (topology.mem.wordCount * topology.mem.width) < 512)
       return false
     return true
   }
@@ -59,19 +59,74 @@ object GenBun extends App {
 
   if(regions.isEmpty) regions ++= ParamSimple.defaultPma
 
+
   sc.memBlackBoxers += new PhaseNetlist {
     override def impl(pc: PhaseContext): Unit = {
-      val topPatch = pc.topLevel rework new AreaRoot {
-        val CMBIST, CMATPG = in Bool()
-        val sramtrm = in UInt (3 bits)
-      }
       pc.walkComponents {
         case c: Ram_1w_1rs => {
-          println("path %s", c.getPath())
+          val awidth = c.rdAddressWidth
+          val bwidth = c.wrAddressWidth
+          val adata_width = c.rdDataWidth
+          val bdata_width = c.wrDataWidth
+          val topPatch = pc.topLevel rework new Area {
+            // println(f"rd ${c.rdDataWidth}, wd ${c.wrDataWidth}, ra ${c.rdAddressWidth}, wa ${c.wrAddressWidth}")
+            setName(c.getPath("_"))
+            val stov, emasa, tena, tcena, tenb, tcenb, sea, dftrambyp, seb, ret1n = in Bool()
+            val emaa = in UInt (3 bits)
+            val emab = in UInt (3 bits)
+            val taa = in UInt (awidth bits)
+            val wenb = in UInt (bdata_width bits)
+            val twenb = in UInt (bdata_width bits)
+            val tab = in UInt (bwidth bits)
+            val tdb = in UInt (bdata_width bits)
+            val sia = in UInt (2 bits)
+            val sib = in UInt (2 bits)
+          }
           c.rework {
-            topPatch.CMBIST.pull(propagateName = true)
-            topPatch.CMATPG.pull(propagateName = true)
-            topPatch.sramtrm.pull(propagateName = true)
+            topPatch.stov.pull(propagateName = true).unsetName().setName("stov")
+            topPatch.emasa.pull(propagateName = true).unsetName().setName("emasa")
+            topPatch.tena.pull(propagateName = true).unsetName().setName("tena")
+            topPatch.tcena.pull(propagateName = true).unsetName().setName("tcena")
+            topPatch.tenb.pull(propagateName = true).unsetName().setName("tenb")
+            topPatch.tcenb.pull(propagateName = true).unsetName().setName("tcenb")
+            topPatch.sea.pull(propagateName = true).unsetName().setName("sea")
+            topPatch.dftrambyp.pull(propagateName = true).unsetName().setName("dftrambyp")
+            topPatch.seb.pull(propagateName = true).unsetName().setName("seb")
+            topPatch.ret1n.pull(propagateName = true).unsetName().setName("ret1n")
+            topPatch.emaa.pull(propagateName = true).unsetName().setName("emaa")
+            topPatch.emab.pull(propagateName = true).unsetName().setName("emab")
+            topPatch.taa.pull(propagateName = true).unsetName().setName("taa")
+            topPatch.wenb.pull(propagateName = true).unsetName().setName("wenb")
+            topPatch.twenb.pull(propagateName = true).unsetName().setName("twenb")
+            topPatch.tab.pull(propagateName = true).unsetName().setName("tab")
+            topPatch.tdb.pull(propagateName = true).unsetName().setName("tdb")
+            topPatch.sia.pull(propagateName = true).unsetName().setName("sia")
+            topPatch.sib.pull(propagateName = true).unsetName().setName("sib")
+          }
+          val blackboxed_outputs = c rework new AreaRoot {
+            val cenya, cenyb = out Bool()
+            val soa = out UInt (2 bits)
+            val sob = out UInt (2 bits)
+            val wenyb = out UInt (adata_width bits)
+            val aya = out UInt (awidth bits)
+            val ayb = out UInt (bwidth bits)
+          }
+          pc.topLevel rework new Area {
+            setName(c.getPath("_"))
+            val cenya, cenyb = out Bool()
+            val soa = out UInt (2 bits)
+            val sob = out UInt (2 bits)
+            val wenyb = out UInt (adata_width bits)
+            val aya = out UInt (awidth bits)
+            val ayb = out UInt (bwidth bits)
+
+            cenya := blackboxed_outputs.cenya.pull(propagateName = true)
+            cenyb := blackboxed_outputs.cenyb.pull(propagateName = true)
+            soa := blackboxed_outputs.soa.pull(propagateName = true)
+            sob := blackboxed_outputs.sob.pull(propagateName = true)
+            wenyb := blackboxed_outputs.wenyb.pull(propagateName = true)
+            aya := blackboxed_outputs.aya.pull(propagateName = true)
+            ayb := blackboxed_outputs.ayb.pull(propagateName = true)
           }
           c.addGeneric("ramname", s"RAM_DP_${c.wordCount}_${c.wordWidth}")
         }
@@ -80,6 +135,7 @@ object GenBun extends App {
     }
   }
 
+/*
   // configure CPU performance features
   param.decoders = 2
   param.lanes = 2
@@ -130,7 +186,7 @@ object GenBun extends App {
   // enable caches
   param.lsuL1Enable = true
   param.fetchL1Enable = true
-
+*/
   val report = sc.generateSystemVerilog {
     val plugins = param.plugins()
     ParamSimple.setPma(plugins, regions)
@@ -160,6 +216,7 @@ class BunSoCForceRamBlockPhase() extends spinal.core.internals.Phase{
   }
   override def hasNetlistImpact: Boolean = false
 }
+
 
 // Generates VexiiRiscv verilog using command line arguments
 object GenBunTl extends App {
