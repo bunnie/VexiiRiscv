@@ -1,3 +1,5 @@
+// generation notes: --with-rvZb removed
+
 package vexiiriscv
 
 import spinal.core._
@@ -39,6 +41,36 @@ object blackboxSyncOnly extends MemBlackboxingPolicy {
   }
 
   override def onUnblackboxable(topology: MemTopology, who: Any, message: String): Unit = {}
+}
+
+object GenLitex extends App {
+  val param = new ParamSimple()
+  val sc = BunSpinalConfig // .addStandardMemBlackboxing(blackboxSyncOnly)
+  val regions = ArrayBuffer[PmaRegion]()
+  val analysis = new AnalysisUtils
+  var reportModel = false
+
+  assert(new scopt.OptionParser[Unit]("VexiiRiscvLitex") {
+    help("help").text("prints this usage text")
+    opt[Unit]("report-model") action { (v, c) => reportModel = true }
+    param.addOptions(this)
+    analysis.addOption(this)
+    ParamSimple.addOptionRegion(this, regions)
+  }.parse(args, ()).nonEmpty)
+
+  if (regions.isEmpty) regions ++= ParamSimple.defaultPma
+
+  val report = sc.generateSystemVerilog {
+    val plugins = param.plugins()
+    ParamSimple.setPma(plugins, regions)
+    VexiiRiscv(plugins)
+  }
+
+  analysis.report(report)
+
+  if (reportModel) {
+    misc.Reporter.model(report.toplevel)
+  }
 }
 
 // Generates VexiiRiscv verilog using command line arguments
