@@ -14,7 +14,7 @@ import vexiiriscv.decode.{Decode, DecodePipelinePlugin}
 import vexiiriscv.execute.{CsrRamPlugin, ExecuteLanePlugin, SrcPlugin}
 import vexiiriscv.execute.lsu._
 import vexiiriscv.fetch._
-import vexiiriscv.misc.PrivilegedPlugin
+import vexiiriscv.misc.{EmbeddedRiscvJtag, PrivilegedPlugin}
 import vexiiriscv.prediction.BtbPlugin
 import vexiiriscv.regfile.RegFilePlugin
 import vexiiriscv.soc.TilelinkVexiiRiscvFiber
@@ -221,6 +221,13 @@ object GenBun extends App {
 */
   val report = sc.generateSystemVerilog {
     val plugins = param.plugins()
+    plugins.foreach {
+      case p: EmbeddedRiscvJtag => {
+        p.debugCd = ClockDomain.current.copy(reset = Bool().setName("EmbeddedRiscvJtag_logic_debug_reset"))
+        p.noTapCd = ClockDomain(Bool().setName("EmbeddedRiscvJtag_logic_jtagInstruction_tck"))
+      }
+      case _ =>
+    }
     ParamSimple.setPma(plugins, regions)
     VexiiRiscv(plugins)
   }
