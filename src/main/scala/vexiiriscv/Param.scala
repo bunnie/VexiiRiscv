@@ -104,6 +104,7 @@ class ParamSimple() {
   var withDispatcherBuffer = false
   var hartCount = 1
   var withMmu = false
+  var asidWidth = 0
   var physicalWidth = 32
   var resetVector = 0x80000000l
   var decoders = 1
@@ -123,6 +124,7 @@ class ParamSimple() {
   var withRva = false
   var withRvf = false
   var withRvcbm = false
+  var gshareBanks = 1
   var btbDualPortRam = true
   var fpuIgnoreSubnormal = false
   var fpuWbAt = 2
@@ -139,6 +141,7 @@ class ParamSimple() {
   var relaxedShift = false
   var relaxedSrc = true
   var relaxedBtb = false
+  var relaxedBtbHit = false
   var relaxedDiv = false
   var relaxedMulInputs = false
   var allowBypassFrom = 100 //100 => disabled
@@ -537,6 +540,7 @@ class ParamSimple() {
     opt[Unit]("relaxed-shift") action { (v, c) => relaxedShift = true }
     opt[Unit]("relaxed-src") action { (v, c) => relaxedSrc = true }
     opt[Unit]("relaxed-btb") action { (v, c) => relaxedBtb = true }
+    opt[Unit]("relaxed-btb-hit") action { (v, c) => relaxedBtbHit = true }
     opt[Unit]("stressed-btb") action { (v, c) => relaxedBtb = false }
     opt[Unit]("stressed-div") action { (v, c) => relaxedDiv = false }
     opt[Unit]("stressed-branch") action { (v, c) => relaxedBranch = false }
@@ -564,6 +568,7 @@ class ParamSimple() {
     opt[Unit]("with-rvZcbm") action { (v, c) => withRvcbm = true }
     opt[Unit]("with-whiteboxer-outputs") action { (v, c) => withWhiteboxerOutputs = true }
     opt[Unit]("with-hart-id-input") action { (v, c) => withHartIdInput = true }
+    opt[Unit]("with-hart-id-input-defaulted") action { (v, c) => privParam.withHartIdInputDefaulted = true }
     opt[Unit]("fma-reduced-accuracy") action { (v, c) => fpuMulParam.fmaFullAccuracy = false }
     opt[Unit]("fpu-ignore-subnormal") action { (v, c) => fpuIgnoreSubnormal = true }
     opt[Unit]("with-aligner-buffer").unbounded() action { (v, c) => withAlignerBuffer = true }
@@ -579,6 +584,7 @@ class ParamSimple() {
     opt[Unit]("with-btb") action { (v, c) => withBtb = true }
     opt[Unit]("with-ras") action { (v, c) => withRas = true }
     opt[Unit]("without-ras") action { (v, c) => withRas = false }
+    opt[Int]("gshare-banks") action { (v, c) => gshareBanks = v }
     opt[Unit]("btb-single-port-ram") action { (v, c) => btbDualPortRam = false }
     opt[Unit]("with-late-alu") action { (v, c) => withLateAlu = true; allowBypassFrom = 0; storeRs2Late = true }
     opt[Unit]("with-store-rs2-late") action { (v, c) => storeRs2Late = true }
@@ -643,6 +649,7 @@ class ParamSimple() {
     opt[Unit]("pmp-tor-disable") action { (v, c) => pmpParam.withTor = false }
     opt[Unit]("with-rdtime") action { (v, c) => privParam.withRdTime = true }
     opt[Unit]("with-cfu") action { (v, c) => withCfu = true }
+    opt[Int]("asid-width") action{ (v,c) => asidWidth = v }
     opt[Int]("gshare-bytes") action{ (v,c) => gshareBytes = v }
     opt[Unit]("dual-issue") action { (v, c) =>
       decoders = 2
@@ -685,7 +692,8 @@ class ParamSimple() {
       case false => plugins += new vexiiriscv.memory.StaticTranslationPlugin(physicalWidth)
       case true => plugins += new vexiiriscv.memory.MmuPlugin(
         spec = if (xlen == 32) MmuSpec.sv32 else MmuSpec.sv39,
-        physicalWidth = physicalWidth
+        physicalWidth = physicalWidth,
+        asidWidth = asidWidth
       )
     }
 
@@ -706,7 +714,7 @@ class ParamSimple() {
         rasDepth = if(withRas) 4 else 0,
         hashWidth = btbHashWidth,
         readAt = 0,
-        hitAt = 1,
+        hitAt = 1+relaxedBtbHit.toInt,
         jumpAt = 1+relaxedBtb.toInt,
         bootMemClear = bootMemClear
       )
@@ -716,7 +724,8 @@ class ParamSimple() {
         memBytes = gshareBytes,
         historyWidth = 12,
         readAt = 0,
-        bootMemClear = bootMemClear
+        bootMemClear = bootMemClear,
+        banksCount = gshareBanks
       )
       plugins += new prediction.HistoryPlugin()
     }
