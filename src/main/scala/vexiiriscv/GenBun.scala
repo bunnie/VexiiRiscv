@@ -24,6 +24,8 @@ import spinal.core.internals._
 
 import scala.collection.mutable.ArrayBuffer
 
+import java.io.{File, FileWriter}
+
 object BunSpinalConfig extends spinal.core.SpinalConfig(
   defaultConfigForClockDomains = ClockDomainConfig(
     resetKind = spinal.core.SYNC
@@ -43,9 +45,83 @@ object blackboxSyncOnly extends MemBlackboxingPolicy {
   override def onUnblackboxable(topology: MemTopology, who: Any, message: String): Unit = {}
 }
 
+object blackboxRomOnly extends MemBlackboxingPolicy {
+  override def translationInterest(topology: MemTopology): Boolean = {
+    if(topology.writes.size == 0)
+      return true
+    return false
+  }
+
+  override def onUnblackboxable(topology: MemTopology, who: Any, message: String): Unit = {}
+}
+
+class CaseRomPhase extends PhaseNetlist{
+  override def impl(pc: PhaseContext): Unit = {
+    pc.walkComponents{
+      case c : Rom_1rs => {
+        c.setDefinitionName(c.getRtlPath("_")) // provide a unique name
+        val rom = c.getTag(classOf[MemBlackboxOf]).get.mem
+        val content = rom.initialContent
+
+        c.genericElements.clear()
+        val addressWidth = log2Up(c.wordCount)
+        val lines = for ((data, addr) <- content.zipWithIndex) yield {
+          f"            $addressWidth'h${addr}%x: data <= ${c.wordWidth}%d'h${data}%x;"
+        }
+        // Emit a verilog blackbox template for the ROM
+        val template =
+          """
+            |`resetall
+            |`timescale 1ns / 1ps
+            |`default_nettype none
+            |
+            |module {modname} #(
+            |    parameter wordCount = {wordCount},
+            |    parameter wordWidth = {wordWidth},
+            |    parameter addrWidth = $clog2(wordCount)
+            |)
+            |(
+            |    input  wire                             clk,
+            |    input  wire                             en,
+            |    input  wire [addrWidth - 1:0]           addr,
+            |    output reg  [wordWidth - 1:0]           data
+            |);
+            |
+            |always @(posedge clk) begin
+            |    if (en) begin
+            |        case (addr)
+            |{romvals}
+            |
+            |            default: data <= {wordWidth}'h0;
+            |        endcase
+            |    end else begin
+            |        data <= data;
+            |    end
+            |end
+            |
+            |endmodule
+            |`resetall
+            |""".stripMargin
+
+        val verilog = template
+          .replace("{romvals}", s"${lines.mkString("\n")}")
+          .replace("{modname}", s"${c.definitionName}")
+          .replace("{wordCount}", s"${c.wordCount}")
+          .replace("{wordWidth}", s"${c.wordWidth}")
+
+        val fileWriter = new FileWriter(new File(c.definitionName + ".v"))
+        fileWriter.write(verilog)
+        fileWriter.flush()
+        fileWriter.close()
+      }
+      case _ =>
+    }
+  }
+}
+
 object GenLitex extends App {
   val param = new ParamSimple()
-  val sc = BunSpinalConfig // .addStandardMemBlackboxing(blackboxSyncOnly)
+  val sc = BunSpinalConfig.copy(blackBoxRom = true).addStandardMemBlackboxing(blackboxRomOnly)
   val regions = ArrayBuffer[PmaRegion]()
   val analysis = new AnalysisUtils
   var reportModel = false
@@ -59,6 +135,8 @@ object GenLitex extends App {
   }.parse(args, ()).nonEmpty)
 
   if (regions.isEmpty) regions ++= ParamSimple.defaultPma
+
+  sc.memBlackBoxers += new CaseRomPhase
 
   val report = sc.generateSystemVerilog {
     val plugins = param.plugins()
@@ -76,7 +154,7 @@ object GenLitex extends App {
 // Generates VexiiRiscv verilog using command line arguments
 object GenBun extends App {
   val param = new ParamSimple()
-  val sc = BunSpinalConfig.addStandardMemBlackboxing(blackboxSyncOnly)
+  val sc = BunSpinalConfig.copy(blackBoxRom = true).addStandardMemBlackboxing(blackboxSyncOnly)
   val regions = ArrayBuffer[PmaRegion]()
   val analysis = new AnalysisUtils
   var reportModel = false
@@ -167,6 +245,7 @@ object GenBun extends App {
     }
   }
 
+  sc.memBlackBoxers += new CaseRomPhase
 /*
   // configure CPU performance features
   param.decoders = 2
